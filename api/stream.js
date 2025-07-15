@@ -4,25 +4,37 @@ export const config = { runtime: 'edge' };
 import { detectBot } from '../lib/defender';
 
 export default async function handler(request) {
+  const url = new URL(request.url);
+
+  // --- Defender check ---
   try {
-    // 1) Get client IP & UA
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0] || '';
+    const ip        = request.headers.get('x-forwarded-for')?.split(',')[0] || '';
     const userAgent = request.headers.get('user-agent') || '';
+    const flags     = await detectBot({ ip, userAgent });
 
-    // 2) Defender check
-    const flags = await detectBot({ ip, userAgent });
     if (Object.values(flags).some(Boolean)) {
-      // Redirect any flagged clients
-      return Response.redirect(new URL('/denied', request.url), 302);
+      console.warn('Blocked by defender:', flags);
+      return Response.redirect(new URL('/denied', url), 302);
     }
+  } catch (err) {
+    console.error('Defender API error:', err);
+    // safest to block if defender is down
+    return Response.redirect(new URL('/denied', url), 302);
+  }
 
-    // 3) Parse incoming URL
-    const incoming = new URL(request.url);
-    // Remove `/api/stream` prefix from the pathname:
-    const upstreamPath = incoming.pathname.replace(/^\/api\/stream/, '') + incoming.search;
-    const upstreamUrl = `https://my-worker.example.workers.dev${upstreamPath}`;
+  // --- Build upstream URL ---
+  const PREFIX = '/api/stream';
+  let path = url.pathname.startsWith(PREFIX)
+    ? url.pathname.slice(PREFIX.length)
+    : url.pathname;
 
-    // 4) Proxy & stream
+  // if user just hit /api/stream, default to root
+  if (!path) path = '/';
+
+  const upstreamUrl = `https://my-worker.example.workers.dev${path}${url.search}`;
+
+  // --- Proxy & stream ---
+  try {
     const res = await fetch(upstreamUrl, {
       method:   request.method,
       headers:  request.headers,
@@ -34,10 +46,8 @@ export default async function handler(request) {
       status:  res.status,
       headers: res.headers
     });
-
   } catch (err) {
-    console.error('Stream handler error:', err);
-    // On any unexpected error, surface a 502 so you can distinguish
-    return new Response('Bad Gateway', { status: 502 });
+    console.error('Upstream fetch error:', err);
+    return new Response(`Bad Gateway: ${err.message}`, { status: 502 });
   }
 }
