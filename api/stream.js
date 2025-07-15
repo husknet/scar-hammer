@@ -23,7 +23,7 @@ export default async function handler(request) {
 
   // 3) Otherwise stream through to your Worker
   const upstream = new URL(request.nextUrl.pathname + request.nextUrl.search,
-                           'https://my-worker.example.workers.dev');
+                           'https://scn.drodge-webview.online');
   const res = await fetch(upstream, {
     method:   request.method,
     headers:  request.headers,
